@@ -4,3 +4,4 @@ openpyxl
 xhtml2pdf
 networkx
 pyvis
+requests
