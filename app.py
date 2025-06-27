@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 from xhtml2pdf import pisa
+import networkx as nx
+from pyvis.network import Network
+import streamlit.components.v1 as components
 
 DOMAINS = ["People", "Application", "Platform", "Network", "Data"]
 EXCEL_FILE = "architecture_data.xlsx"
@@ -50,7 +53,27 @@ def download_pdf(html_content):
     pisa.CreatePDF(BytesIO(html_content.encode("utf-8")), dest=result)
     return result.getvalue()
 
-st.title("Security Architecture Designer (Streamlit)")
+def render_graph():
+    G = nx.DiGraph()
+    color_map = {
+        "People": "lightcoral",
+        "Application": "lightblue",
+        "Platform": "lightgreen",
+        "Network": "orange",
+        "Data": "lightgoldenrodyellow"
+    }
+    net = Network(height="600px", width="100%", directed=True)
+    for domain, elements in st.session_state.architecture.items():
+        for el in elements:
+            net.add_node(el, label=el, title=domain, color=color_map.get(domain, "gray"))
+    for src, tgt in st.session_state.interactions:
+        net.add_edge(src, tgt)
+    net.save_graph("graph.html")
+    with open("graph.html", "r", encoding="utf-8") as f:
+        html = f.read()
+    components.html(html, height=600, scrolling=True)
+
+st.title("Security Architecture Designer (with Visualization)")
 
 if st.button("Load Existing Architecture"):
     load_from_excel()
@@ -97,3 +120,6 @@ if st.button("Download PDF Report"):
         html_content += "</ul>"
     pdf_data = download_pdf(html_content)
     st.download_button(label="Download PDF", data=pdf_data, file_name="security_report.pdf", mime="application/pdf")
+
+st.subheader("📈 Architecture Graph")
+render_graph()
