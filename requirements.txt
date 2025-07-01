@@ -6,3 +6,4 @@ networkx
 pyvis
 requests
 PyGithub
+graphviz
