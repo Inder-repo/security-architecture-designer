@@ -60,13 +60,15 @@ class SecurityArchitectureManager:
         # Load security control data from SQLite
         self._load_data_from_db()
 
-        # Initialize session state variables for architecture elements and interactions
+        # Initialize session state variables for architecture elements and interactions IF THEY DON'T EXIST
+        # This allows Streamlit to manage state across reruns, only creating them if fresh session
         if "architecture" not in st.session_state:
             st.session_state.architecture = {domain: [] for domain in DOMAINS}
         if "interactions" not in st.session_state:
             st.session_state.interactions = []
         
         # Load the dynamic architecture (elements and interactions) from Excel or initialize
+        # This function is now smarter about not wiping existing session state if no file is found.
         self._load_architecture_from_excel()
 
     def _get_db_connection(self):
@@ -134,7 +136,6 @@ class SecurityArchitectureManager:
             self.threat_mappings = pd.read_sql_query("SELECT * FROM threat_mappings", conn)
         except Exception as e:
             st.error(f"Error loading data from database: {e}. Ensure the database file '{DB_FILE}' is accessible.")
-            # Ensure DataFrames are always created, even if empty, to prevent errors downstream
             self.flow_mappings = pd.DataFrame(columns=["FlowType", "OWASPID", "Requirement", "GRCMapping"])
             self.threat_mappings = pd.DataFrame(columns=["SourceDomain", "TargetDomain", "STRIDE_Threat", "MITRE_Technique", "Recommended_Control", "NIST_Control", "ISO_Control"])
         finally:
@@ -161,34 +162,45 @@ class SecurityArchitectureManager:
 
 
     def _load_architecture_from_excel(self):
-        """Loads architecture elements and interactions from Excel."""
+        """
+        Loads architecture elements and interactions from Excel.
+        Crucially, it only loads and overwrites session state if the file exists and is valid.
+        Otherwise, it leaves the current session state as is.
+        """
+        excel_file_path = "architecture_data.xlsx"
         try:
-            data = pd.read_excel("architecture_data.xlsx", sheet_name=None)
-            df_elements = data.get("Elements", pd.DataFrame())
-            df_interactions = data.get("Interactions", pd.DataFrame())
-            
-            # Clear current state before loading
-            st.session_state.architecture = {domain: [] for domain in DOMAINS}
-            st.session_state.interactions = []
+            # Check if the file exists and is not empty before attempting to read
+            if os.path.exists(excel_file_path) and os.path.getsize(excel_file_path) > 0:
+                data = pd.read_excel(excel_file_path, sheet_name=None)
+                df_elements = data.get("Elements", pd.DataFrame())
+                df_interactions = data.get("Interactions", pd.DataFrame())
+                
+                # ONLY CLEAR AND OVERWRITE session state if the file was successfully read
+                st.session_state.architecture = {domain: [] for domain in DOMAINS}
+                st.session_state.interactions = []
 
-            for index, row in df_elements.iterrows():
-                domain = row["Domain"]
-                element = row["Element"]
-                if domain in DOMAINS and element not in st.session_state.architecture[domain]:
-                    st.session_state.architecture[domain].append(element)
-            
-            for index, row in df_interactions.iterrows():
-                interaction = [row["Source"], row["Target"], row["FlowType"]]
-                if interaction not in st.session_state.interactions:
-                    st.session_state.interactions.append(interaction)
-            
-            st.success("Architecture loaded successfully from architecture_data.xlsx!")
-        except FileNotFoundError:
-            st.info("No existing 'architecture_data.xlsx' found. Starting a new architecture.")
-            st.session_state.architecture = {domain: [] for domain in DOMAINS}
-            st.session_state.interactions = []
+                for index, row in df_elements.iterrows():
+                    domain = row["Domain"]
+                    element = row["Element"]
+                    if domain in DOMAINS and element not in st.session_state.architecture[domain]:
+                        st.session_state.architecture[domain].append(element)
+                
+                for index, row in df_interactions.iterrows():
+                    interaction = [row["Source"], row["Target"], row["FlowType"]]
+                    if interaction not in st.session_state.interactions:
+                        st.session_state.interactions.append(interaction)
+                
+                st.success("Architecture loaded successfully from architecture_data.xlsx!")
+            else:
+                # If file doesn't exist or is empty, inform the user but DO NOT wipe session_state.
+                # This ensures newly added elements persist until explicitly saved or cleared.
+                st.info("No existing 'architecture_data.xlsx' found or file is empty. Starting a new architecture.")
         except Exception as e:
             st.error(f"Failed to load architecture from architecture_data.xlsx: {e}")
+            # If an error occurs during loading, ensure session state is reset to a functional empty state
+            # so the app doesn't crash, but this implies data loss if the file was corrupted.
+            st.session_state.architecture = {domain: [] for domain in DOMAINS}
+            st.session_state.interactions = []
 
     # --- CORE APPLICATION LOGIC ---
 
@@ -198,6 +210,7 @@ class SecurityArchitectureManager:
         if name and name not in st.session_state.architecture[domain]:
             st.session_state.architecture[domain].append(name)
             st.success(f"Added '{name}' to {domain}.")
+            self._save_architecture_to_excel() # Save immediately after modification
         else:
             st.warning(f"Element '{name}' already exists in {domain} or is empty.")
 
@@ -207,6 +220,7 @@ class SecurityArchitectureManager:
         if new_interaction not in st.session_state.interactions:
             st.session_state.interactions.append(new_interaction)
             st.success(f"Added interaction: {source} --({flow_type})--> {target}")
+            self._save_architecture_to_excel() # Save immediately after modification
         else:
             st.warning("This interaction already exists.")
 
@@ -220,6 +234,7 @@ class SecurityArchitectureManager:
                 if i[0] != name and i[1] != name
             ]
             st.success(f"Deleted '{name}' from {domain} and associated interactions.")
+            self._save_architecture_to_excel() # Save immediately after modification
         else:
             st.warning(f"Element '{name}' not found in {domain}.")
 
@@ -228,6 +243,7 @@ class SecurityArchitectureManager:
         if interaction_list in st.session_state.interactions:
             st.session_state.interactions.remove(interaction_list)
             st.success(f"Deleted interaction: {interaction_list[0]} --({interaction_list[2]})--> {interaction_list[1]}")
+            self._save_architecture_to_excel() # Save immediately after modification
         else:
             st.warning("Interaction not found.")
 
@@ -235,7 +251,7 @@ class SecurityArchitectureManager:
         """Generates security requirements based on defined interactions and flow types."""
         if self.flow_mappings.empty:
             st.warning("Flow mappings data is not loaded or is empty. Cannot generate requirements. Please run the Data Manager app or ensure initial data is loaded.")
-            return pd.DataFrame(columns=["Interaction", "OWASP ID", "Requirement", "GRC Mapping"]) # Return empty DataFrame with expected columns
+            return pd.DataFrame(columns=["Interaction", "OWASP ID", "Requirement", "GRC Mapping"])
         
         requirements = []
         for source, target, flow_type in st.session_state.interactions:
@@ -253,14 +269,14 @@ class SecurityArchitectureManager:
         """Generates a STRIDE-based threat analysis with MITRE ATT&CK and controls."""
         if self.threat_mappings.empty:
             st.warning("Threat mappings data is not loaded or is empty. Cannot generate threat analysis. Please run the Data Manager app or ensure initial data is loaded.")
-            return pd.DataFrame(columns=["Interaction", "Source Domain", "Target Domain", "STRIDE Threat", "MITRE Technique", "Recommended Control", "NIST Control", "ISO Control"]) # Return empty DataFrame with expected columns
+            return pd.DataFrame(columns=["Interaction", "Source Domain", "Target Domain", "STRIDE Threat", "MITRE Technique", "Recommended Control", "NIST Control", "ISO Control"])
 
         threats = []
         element_domain_map = {
             elem: domain for domain, elements in st.session_state.architecture.items() for elem in elements
         }
         
-        for source, target, flow_type in st.session_state.interactions: # Added flow_type for context
+        for source, target, flow_type in st.session_state.interactions:
             src_domain = element_domain_map.get(source)
             tgt_domain = element_domain_map.get(target)
 
@@ -272,13 +288,10 @@ class SecurityArchitectureManager:
                 (self.threat_mappings["SourceDomain"] == src_domain) &
                 (self.threat_mappings["TargetDomain"] == tgt_domain)
             ]
-
-            if relevant_threats.empty:
-                pass # No specific threats found, just skip and don't add to output
             
             for index, row in relevant_threats.iterrows():
                 threats.append({
-                    "Interaction": f"{source} --({flow_type})--> {target}", # Include flow_type for clarity
+                    "Interaction": f"{source} --({flow_type})--> {target}",
                     "Source Domain": row["SourceDomain"],
                     "Target Domain": row["TargetDomain"],
                     "STRIDE Threat": row["STRIDE_Threat"],
@@ -360,7 +373,6 @@ st.markdown("Use this tool to design your architecture and analyze security requ
 st.markdown("---")
 
 # Initialize the manager
-# This now also handles the creation and initial population of security_architecture.db
 manager = SecurityArchitectureManager()
 
 # Sidebar for common actions and help
@@ -379,7 +391,7 @@ To add, edit, or delete the underlying security requirements and threat mappings
 **Run the separate Data Manager application (if available):**
 `streamlit run data_manager_app.py`
 
-*(Note: Initial data is automatically populated by this app on first run if database is empty.)*
+*(Note: Initial data for controls is automatically populated by this app on first run if database is empty.)*
 """)
 
 # Main content area
@@ -389,6 +401,7 @@ for i, domain in enumerate(DOMAINS):
     with cols[i]:
         st.markdown(f"**{domain}**")
         with st.container(border=True):
+            # Display current elements for the domain
             if st.session_state.architecture[domain]:
                 for elem in list(st.session_state.architecture[domain]): 
                     col_elem, col_btn = st.columns([0.7, 0.3])
@@ -401,6 +414,7 @@ for i, domain in enumerate(DOMAINS):
             else:
                 st.write(f"No {domain} elements defined yet.")
 
+            # Form to add new elements
             with st.form(key=f"add_form_{domain}", clear_on_submit=True):
                 new_elem_input = st.text_input(f"Add new {domain} element:", key=f"add_elem_input_form_{domain}")
                 add_button_clicked = st.form_submit_button(f"Add {domain} Element")
@@ -408,7 +422,7 @@ for i, domain in enumerate(DOMAINS):
                 if add_button_clicked:
                     if new_elem_input:
                         manager.add_element(domain, new_elem_input)
-                        st.rerun()
+                        st.rerun() # Re-run the app to display the updated state
                     else:
                         st.warning("Element name cannot be empty.")
 
