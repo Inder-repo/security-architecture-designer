@@ -12,19 +12,64 @@ DB_FILE = "security_architecture.db" # Database file for security controls
 # Define the domains for the architecture elements
 DOMAINS = ["People", "Application", "Platform", "Network", "Data"]
 
+# Define ASVS Levels
+ASVS_LEVELS = ["L1", "L2", "L3"]
+
 # --- Initial Data (Now embedded directly in app.py for self-population) ---
+
+# This will be replaced by ASVS controls in the DB
+# INITIAL_FLOW_MAPPINGS will now link FlowType to ASVS_IDs
+INITIAL_ASVS_CONTROLS = [
+    # ASVS V1: Architecture, Design and Threat Modeling
+    {"ASVS_ID": "V1.1.1", "ASVS_Level": "L1", "Requirement": "Verify the application uses an actively managed, secure software development lifecycle (SDLC).", "GRCMapping": "NIST 800-53 SA-3"},
+    {"ASVS_ID": "V1.2.1", "ASVS_Level": "L2", "Requirement": "Verify that authentication is performed by a trusted component.", "GRCMapping": "ISO 27002 A.9.2.1"},
+    {"ASVS_ID": "V1.2.2", "ASVS_Level": "L3", "Requirement": "Verify that all components that interact with unauthenticated clients (e.g., login pages) are hardened to prevent enumeration attacks and DoS.", "GRCMapping": "NIST 800-53 SC-5"},
+
+    # ASVS V2: Authentication Verification Requirements
+    {"ASVS_ID": "V2.1.1", "ASVS_Level": "L1", "Requirement": "Verify that all passwords are at least 12 characters long and can contain spaces and special characters.", "GRCMapping": "NIST 800-63B 5.1.1"},
+    {"ASVS_ID": "V2.2.1", "ASVS_Level": "L2", "Requirement": "Verify that all authenticators use multi-factor authentication (MFA) for high-value accounts.", "GRCMapping": "NIST 800-63B 5.1.2"},
+    {"ASVS_ID": "V2.3.1", "ASVS_Level": "L1", "Requirement": "Verify that authenticated sessions are regenerated upon any change in authentication context (e.g., privilege escalation).", "GRCMapping": "OWASP Top 10 A07"},
+    {"ASVS_ID": "V2.4.1", "ASVS_Level": "L2", "Requirement": "Verify that credential storage uses a strong, salted, adaptive hashing function (e.g., Argon2, bcrypt).", "GRCMapping": "NIST 800-63B 5.1.1"},
+
+    # ASVS V3: Session Management Verification Requirements
+    {"ASVS_ID": "V3.1.1", "ASVS_Level": "L1", "Requirement": "Verify that session tokens are cryptographically random and unpredictable.", "GRCMapping": "OWASP Top 10 A07"},
+    {"ASVS_ID": "V3.2.1", "ASVS_Level": "L2", "Requirement": "Verify that sessions are bound to the client's IP address or other suitable attributes.", "GRCMapping": "ISO 27002 A.9.4.1"},
+    {"ASVS_ID": "V3.3.1", "ASVS_Level": "L1", "Requirement": "Verify that sessions have appropriate idle and absolute timeouts.", "GRCMapping": "OWASP Top 10 A07"},
+
+    # ASVS V4: Access Control Verification Requirements
+    {"ASVS_ID": "V4.1.1", "ASVS_Level": "L1", "Requirement": "Verify that access control policies are defined and enforced at the server-side and are not bypassable.", "GRCMapping": "OWASP Top 10 A01"},
+    {"ASVS_ID": "V4.2.1", "ASVS_Level": "L2", "Requirement": "Verify that all functions, resources, and services enforce authorization checks.", "GRCMapping": "NIST 800-53 AC-3"},
+
+    # ASVS V5: Validation, Sanitization and Encoding Verification Requirements
+    {"ASVS_ID": "V5.1.1", "ASVS_Level": "L1", "Requirement": "Verify that all untrusted input is validated, sanitized, or encoded based on context.", "GRCMapping": "OWASP Top 10 A03"},
+    {"ASVS_ID": "V5.2.1", "ASVS_Level": "L2", "Requirement": "Verify that dynamic SQL queries use parameterized statements or object-relational mapping (ORM).", "GRCMapping": "OWASP Top 10 A03"},
+
+    # ASVS V6: Stored Cryptography Verification Requirements
+    {"ASVS_ID": "V6.1.1", "ASVS_Level": "L1", "Requirement": "Verify that sensitive data at rest is encrypted using strong, modern, industry-accepted algorithms and protocols.", "GRCMapping": "NIST 800-53 SC-28"},
+
+    # ASVS V9: Communications Verification Requirements (HTTPS related)
+    {"ASVS_ID": "V9.1.1", "ASVS_Level": "L1", "Requirement": "Verify that all communication with external services uses TLS 1.2+ with strong ciphers and perfect forward secrecy.", "GRCMapping": "NIST 800-53 SC-8"},
+    {"ASVS_ID": "V9.1.2", "ASVS_Level": "L2", "Requirement": "Verify that the application uses HSTS with a long max-age and preloading.", "GRCMapping": "NIST 800-53 SC-8"},
+    {"ASVS_ID": "V9.2.1", "ASVS_Level": "L1", "Requirement": "Verify that server certificates are valid, not expired, and issued by a trusted Certificate Authority.", "GRCMapping": "NIST 800-53 SC-8"},
+
+    # ASVS V13: API and Web Service Verification Requirements
+    {"ASVS_ID": "V13.1.1", "ASVS_Level": "L1", "Requirement": "Verify that API endpoints are protected by appropriate authentication and authorization.", "GRCMapping": "OWASP Top 10 A01"},
+    {"ASVS_ID": "V13.2.1", "ASVS_Level": "L2", "Requirement": "Verify that RESTful APIs correctly use HTTP methods (GET, POST, PUT, DELETE) and enforce statelessness.", "GRCMapping": "OWASP Top 10 A01"},
+]
+
+# Update INITIAL_FLOW_MAPPINGS to use ASVS IDs
+# A single FlowType can now map to multiple ASVS_IDs
 INITIAL_FLOW_MAPPINGS = [
-    {"FlowType": "HTTPS", "OWASPID": "A01:2021", "Requirement": "Ensure TLS 1.2+ with strong ciphers and perfect forward secrecy. Implement HSTS.", "GRCMapping": "NIST 800-53 SC-8 (Transmission Integrity)"},
-    {"FlowType": "Database", "OWASPID": "A04:2021", "Requirement": "Use parameterized queries to prevent SQL injection. Encrypt sensitive data at rest.", "GRCMapping": "NIST 800-53 SC-3 (Security Functionality)"},
-    {"FlowType": "API Call", "OWASPID": "A03:2021", "Requirement": "Implement robust authentication and authorization. Apply rate limiting to prevent brute-force attacks.", "GRCMapping": "ISO 27002 A.9.2.1 (Access Control Policy)"},
-    {"FlowType": "File Transfer", "OWASPID": "A05:2021", "Requirement": "Ensure integrity checks (e.g., checksums) for transferred files. Scan for malware.", "GRCMapping": "NIST 800-53 SI-3 (Malware Protection)"},
-    {"FlowType": "User Login", "OWASPID": "A07:2021", "Requirement": "Implement multi-factor authentication (MFA). Enforce strong password policies.", "GRCMapping": "ISO 27002 A.9.2.4 (User Access Provisioning)"},
-    {"FlowType": "Internal RPC", "OWASPID": "A01:2021", "Requirement": "Authenticate and authorize all internal service-to-service communication.", "GRCMapping": "NIST 800-53 AC-3 (Access Enforcement)"},
-    {"FlowType": "Payment Gateway", "OWASPID": "A04:2021", "Requirement": "PCI DSS compliance for all payment processing and storage.", "GRCMapping": "PCI DSS Requirement 3 (Protect Stored Data)"},
-    {"FlowType": "Message Queue", "OWASPID": "A05:2021", "Requirement": "Encrypt messages in transit and at rest within the queue.", "GRCMapping": "NIST 800-53 SC-8 (Transmission Integrity)"},
-    {"FlowType": "Email", "OWASPID": "A06:2021", "Requirement": "Implement SPF, DKIM, DMARC for email authenticity. Use TLS for email transport.", "GRCMapping": "GDPR Article 32 (Security of Processing)"},
-    {"FlowType": "Logging", "OWASPID": "A09:2021", "Requirement": "Ensure comprehensive logging of security-relevant events. Protect log integrity.", "GRCMapping": "NIST 800-53 AU-2 (Audit Events)"},
-    {"FlowType": "Admin Access", "OWASPID": "A07:2021", "Requirement": "Implement JIT (Just-in-Time) access and strict least privilege for administrative functions.", "GRCMapping": "ISO 27002 A.9.2.5 (Privileged Access Control)"},
+    {"FlowType": "HTTPS", "ASVS_IDs": ["V9.1.1", "V9.1.2", "V9.2.1", "V1.1.1"]}, # Example: HTTPS triggers multiple ASVS controls
+    {"FlowType": "Database", "ASVS_IDs": ["V5.2.1", "V6.1.1", "V1.1.1"]},
+    {"FlowType": "API Call", "ASVS_IDs": ["V13.1.1", "V4.1.1", "V13.2.1", "V1.2.1"]},
+    {"FlowType": "File Transfer", "ASVS_IDs": ["V5.1.1", "V1.1.1"]}, # Placeholder, actual ASVS for file transfer would be V12
+    {"FlowType": "User Login", "ASVS_IDs": ["V2.1.1", "V2.2.1", "V2.3.1", "V2.4.1", "V3.1.1", "V3.3.1", "V1.2.1", "V1.2.2"]},
+    {"FlowType": "Internal RPC", "ASVS_IDs": ["V4.2.1", "V9.1.1"]},
+    {"FlowType": "Payment Gateway", "ASVS_IDs": ["V4.1.1", "V6.1.1", "V9.1.1"]}, # PCI DSS would often require L3 ASVS
+    {"FlowType": "Message Queue", "ASVS_IDs": ["V9.1.1", "V6.1.1"]},
+    {"FlowType": "Email", "ASVS_IDs": ["V9.1.1"]}, # SPF/DKIM/DMARC are more communication protocol level, but TLS is ASVS
+    {"FlowType": "Admin Access", "ASVS_IDs": ["V2.2.1", "V4.2.1", "V1.2.2"]},
 ]
 
 INITIAL_STRIDE_MAPPINGS = [
@@ -61,14 +106,12 @@ class SecurityArchitectureManager:
         self._load_data_from_db()
 
         # Initialize session state variables for architecture elements and interactions IF THEY DON'T EXIST
-        # This allows Streamlit to manage state across reruns, only creating them if fresh session
         if "architecture" not in st.session_state:
             st.session_state.architecture = {domain: [] for domain in DOMAINS}
         if "interactions" not in st.session_state:
             st.session_state.interactions = []
         
         # Load the dynamic architecture (elements and interactions) from Excel or initialize
-        # This function is now smarter about not wiping existing session state if no file is found.
         self._load_architecture_from_excel()
 
     def _get_db_connection(self):
@@ -85,17 +128,25 @@ class SecurityArchitectureManager:
         conn = self._get_db_connection()
         cursor = conn.cursor()
 
-        # Create flow_mappings table
+        # Create flow_mappings table (updated to reference ASVS_IDs)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS flow_mappings (
                 FlowType TEXT PRIMARY KEY,
-                OWASPID TEXT,
-                Requirement TEXT,
+                ASVS_IDs TEXT -- Stored as comma-separated string, or JSON, for simplicity
+            )
+        """)
+
+        # Create asvs_controls table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS asvs_controls (
+                ASVS_ID TEXT PRIMARY KEY,
+                ASVS_Level TEXT NOT NULL,
+                Requirement TEXT NOT NULL,
                 GRCMapping TEXT
             )
         """)
 
-        # Create threat_mappings table
+        # Create threat_mappings table (STRIDE/MITRE)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS threat_mappings (
                 SourceDomain TEXT,
@@ -111,12 +162,21 @@ class SecurityArchitectureManager:
         conn.commit()
 
         # --- Populate tables if they are empty ---
-        # Populate flow_mappings if empty
+        # Populate asvs_controls if empty
+        cursor.execute("SELECT COUNT(*) FROM asvs_controls")
+        if cursor.fetchone()[0] == 0:
+            asvs_df = pd.DataFrame(INITIAL_ASVS_CONTROLS)
+            asvs_df.to_sql('asvs_controls', conn, if_exists='append', index=False)
+            st.toast("Initial ASVS Controls populated in DB.", icon="✅")
+
+        # Populate flow_mappings if empty (updated for ASVS_IDs)
         cursor.execute("SELECT COUNT(*) FROM flow_mappings")
         if cursor.fetchone()[0] == 0:
+            # Convert ASVS_IDs list to a comma-separated string for storage
             flow_df = pd.DataFrame(INITIAL_FLOW_MAPPINGS)
+            flow_df['ASVS_IDs'] = flow_df['ASVS_IDs'].apply(lambda x: ','.join(x))
             flow_df.to_sql('flow_mappings', conn, if_exists='append', index=False)
-            st.toast("Initial Flow Mappings populated in DB.", icon="✅")
+            st.toast("Initial Flow Mappings (with ASVS) populated in DB.", icon="✅")
 
         # Populate threat_mappings if empty
         cursor.execute("SELECT COUNT(*) FROM threat_mappings")
@@ -133,10 +193,15 @@ class SecurityArchitectureManager:
         conn = self._get_db_connection()
         try:
             self.flow_mappings = pd.read_sql_query("SELECT * FROM flow_mappings", conn)
+            # Convert ASVS_IDs back to a list of strings
+            self.flow_mappings['ASVS_IDs'] = self.flow_mappings['ASVS_IDs'].apply(lambda x: x.split(',') if x else [])
+            
+            self.asvs_controls = pd.read_sql_query("SELECT * FROM asvs_controls", conn)
             self.threat_mappings = pd.read_sql_query("SELECT * FROM threat_mappings", conn)
         except Exception as e:
             st.error(f"Error loading data from database: {e}. Ensure the database file '{DB_FILE}' is accessible.")
-            self.flow_mappings = pd.DataFrame(columns=["FlowType", "OWASPID", "Requirement", "GRCMapping"])
+            self.flow_mappings = pd.DataFrame(columns=["FlowType", "ASVS_IDs"])
+            self.asvs_controls = pd.DataFrame(columns=["ASVS_ID", "ASVS_Level", "Requirement", "GRCMapping"])
             self.threat_mappings = pd.DataFrame(columns=["SourceDomain", "TargetDomain", "STRIDE_Threat", "MITRE_Technique", "Recommended_Control", "NIST_Control", "ISO_Control"])
         finally:
             conn.close()
@@ -169,7 +234,6 @@ class SecurityArchitectureManager:
         """
         excel_file_path = "architecture_data.xlsx"
         try:
-            # Check if the file exists and is not empty before attempting to read
             if os.path.exists(excel_file_path) and os.path.getsize(excel_file_path) > 0:
                 data = pd.read_excel(excel_file_path, sheet_name=None)
                 df_elements = data.get("Elements", pd.DataFrame())
@@ -192,13 +256,9 @@ class SecurityArchitectureManager:
                 
                 st.success("Architecture loaded successfully from architecture_data.xlsx!")
             else:
-                # If file doesn't exist or is empty, inform the user but DO NOT wipe session_state.
-                # This ensures newly added elements persist until explicitly saved or cleared.
                 st.info("No existing 'architecture_data.xlsx' found or file is empty. Starting a new architecture.")
         except Exception as e:
             st.error(f"Failed to load architecture from architecture_data.xlsx: {e}")
-            # If an error occurs during loading, ensure session state is reset to a functional empty state
-            # so the app doesn't crash, but this implies data loss if the file was corrupted.
             st.session_state.architecture = {domain: [] for domain in DOMAINS}
             st.session_state.interactions = []
 
@@ -247,261 +307,9 @@ class SecurityArchitectureManager:
         else:
             st.warning("Interaction not found.")
 
-    def generate_requirements(self):
-        """Generates security requirements based on defined interactions and flow types."""
-        if self.flow_mappings.empty:
-            st.warning("Flow mappings data is not loaded or is empty. Cannot generate requirements. Please run the Data Manager app or ensure initial data is loaded.")
-            return pd.DataFrame(columns=["Interaction", "OWASP ID", "Requirement", "GRC Mapping"])
-        
-        requirements = []
-        for source, target, flow_type in st.session_state.interactions:
-            relevant_requirements = self.flow_mappings[self.flow_mappings["FlowType"] == flow_type]
-            for index, row in relevant_requirements.iterrows():
-                requirements.append({
-                    "Interaction": f"{source} --({flow_type})--> {target}",
-                    "OWASP ID": row["OWASPID"],
-                    "Requirement": row["Requirement"],
-                    "GRC Mapping": row["GRCMapping"]
-                })
-        return pd.DataFrame(requirements)
-
-    def generate_threat_analysis(self):
-        """Generates a STRIDE-based threat analysis with MITRE ATT&CK and controls."""
-        if self.threat_mappings.empty:
-            st.warning("Threat mappings data is not loaded or is empty. Cannot generate threat analysis. Please run the Data Manager app or ensure initial data is loaded.")
-            return pd.DataFrame(columns=["Interaction", "Source Domain", "Target Domain", "STRIDE Threat", "MITRE Technique", "Recommended Control", "NIST Control", "ISO Control"])
-
-        threats = []
-        element_domain_map = {
-            elem: domain for domain, elements in st.session_state.architecture.items() for elem in elements
-        }
-        
-        for source, target, flow_type in st.session_state.interactions:
-            src_domain = element_domain_map.get(source)
-            tgt_domain = element_domain_map.get(target)
-
-            if not src_domain or not tgt_domain:
-                st.warning(f"Domain not found for '{source}' or '{target}'. Skipping threat analysis for interaction: {source} -> {target}.")
-                continue
-
-            relevant_threats = self.threat_mappings[
-                (self.threat_mappings["SourceDomain"] == src_domain) &
-                (self.threat_mappings["TargetDomain"] == tgt_domain)
-            ]
-            
-            for index, row in relevant_threats.iterrows():
-                threats.append({
-                    "Interaction": f"{source} --({flow_type})--> {target}",
-                    "Source Domain": row["SourceDomain"],
-                    "Target Domain": row["TargetDomain"],
-                    "STRIDE Threat": row["STRIDE_Threat"],
-                    "MITRE Technique": row["MITRE_Technique"],
-                    "Recommended Control": row["Recommended_Control"],
-                    "NIST Control": row["NIST_Control"],
-                    "ISO Control": row["ISO_Control"]
-                })
-        return pd.DataFrame(threats)
-
-
-    def render_graph(self):
-        """Renders the architecture graph using Pyvis."""
-        color_map = {
-            "People": "lightcoral",
-            "Application": "lightblue",
-            "Platform": "lightgreen",
-            "Network": "orange",
-            "Data": "lightgoldenrodyellow"
-        }
-        net = Network(height="600px", width="100%", directed=True, notebook=True)
-        
-        # Add nodes
-        for domain, elements in st.session_state.architecture.items():
-            for el in elements:
-                net.add_node(el, label=el, title=domain, color=color_map.get(domain, "gray"), size=25, font={'size': 14})
-        
-        # Add edges
-        for src, tgt, flow_type in st.session_state.interactions:
-            if src in net.get_nodes() and tgt in net.get_nodes():
-                net.add_edge(src, tgt, title=flow_type, label=flow_type, color='darkgray', width=2)
-            else:
-                st.warning(f"Skipping graph edge for '{src} -> {tgt}' as one or both elements not found in graph nodes (check if elements were added).")
-        
-        try:
-            html_file = "graph.html"
-            net.save_graph(html_file)
-            with open(html_file, "r", encoding="utf-8") as f:
-                html = f.read()
-            components.html(html, height=600, scrolling=True)
-        except Exception as e:
-            st.error(f"Failed to render graph: {e}")
-
-    def create_github_issue(self, title: str, body: str) -> bool:
-        """Creates a GitHub issue."""
-        GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-        REPO_OWNER = os.getenv("GITHUB_REPO_OWNER")
-        REPO_NAME = os.getenv("GITHUB_REPO_NAME")
-        
-        if not GITHUB_TOKEN or not REPO_OWNER or not REPO_NAME:
-            st.error("GitHub credentials (GITHUB_TOKEN, GITHUB_REPO_OWNER, GITHUB_REPO_NAME) not configured.")
-            st.info("Please set these as environment variables or using Streamlit secrets.")
-            return False
-
-        url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/issues"
-        headers = {
-            "Authorization": f"token {GITHUB_TOKEN}",
-            "Accept": "application/vnd.github.v3+json"
-        }
-        data = {"title": title, "body": body}
-        
-        try:
-            response = requests.post(url, headers=headers, json=data)
-            if response.status_code == 201:
-                st.success(f"GitHub issue created: {response.json().get('html_url', 'URL not available')}")
-                return True
-            else:
-                st.error(f"Failed to create GitHub issue: {response.status_code} - {response.json().get('message', 'No error message')}")
-                return False
-        except requests.exceptions.RequestException as e:
-            st.error(f"Network error or API issue when creating GitHub issue: {e}")
-            return False
-
-# --- Streamlit UI for Main Application ---
-st.set_page_config(layout="wide", page_title="Security Architecture Designer")
-
-st.title("🛡️ Security Architecture Designer & Threat Modeling")
-st.markdown("Use this tool to design your architecture and analyze security requirements and threats.")
-st.markdown("---")
-
-# Initialize the manager
-manager = SecurityArchitectureManager()
-
-# Sidebar for common actions and help
-st.sidebar.header("Architecture Actions")
-if st.sidebar.button("💾 Save Current Architecture"):
-    manager._save_architecture_to_excel()
-if st.sidebar.button("📂 Load Architecture"):
-    manager._load_architecture_from_excel()
-    st.rerun()
-
-st.sidebar.markdown("---")
-st.sidebar.header("Manage Security Controls")
-st.sidebar.markdown("""
-To add, edit, or delete the underlying security requirements and threat mappings (like Flow Types, OWASP IDs, STRIDE, MITRE controls):
-
-**Run the separate Data Manager application (if available):**
-`streamlit run data_manager_app.py`
-
-*(Note: Initial data for controls is automatically populated by this app on first run if database is empty.)*
-""")
-
-# Main content area
-st.subheader("📝 Define Architecture Elements")
-cols = st.columns(len(DOMAINS))
-for i, domain in enumerate(DOMAINS):
-    with cols[i]:
-        st.markdown(f"**{domain}**")
-        with st.container(border=True):
-            # Display current elements for the domain
-            if st.session_state.architecture[domain]:
-                for elem in list(st.session_state.architecture[domain]): 
-                    col_elem, col_btn = st.columns([0.7, 0.3])
-                    with col_elem:
-                        st.markdown(f"- {elem}")
-                    with col_btn:
-                        if st.button("Remove", key=f"del-{domain}-{elem}"):
-                            manager.delete_element(domain, elem)
-                            st.rerun()
-            else:
-                st.write(f"No {domain} elements defined yet.")
-
-            # Form to add new elements
-            with st.form(key=f"add_form_{domain}", clear_on_submit=True):
-                new_elem_input = st.text_input(f"Add new {domain} element:", key=f"add_elem_input_form_{domain}")
-                add_button_clicked = st.form_submit_button(f"Add {domain} Element")
-                
-                if add_button_clicked:
-                    if new_elem_input:
-                        manager.add_element(domain, new_elem_input)
-                        st.rerun() # Re-run the app to display the updated state
-                    else:
-                        st.warning("Element name cannot be empty.")
-
-
-st.subheader("🔗 Define Interactions Between Elements")
-all_elements_flat = [item for sublist in st.session_state.architecture.values() for item in sublist]
-
-if not all_elements_flat:
-    st.warning("Please add some elements before defining interactions.")
-else:
-    with st.form(key="add_interaction_form", clear_on_submit=True):
-        col_src, col_tgt, col_flow = st.columns(3)
-        with col_src:
-            source_elem = st.selectbox("Source Element", [""] + sorted(all_elements_flat), key="source_select")
-        with col_tgt:
-            target_elem = st.selectbox("Target Element", [""] + sorted(all_elements_flat), key="target_select")
-        
-        flow_type_options = manager.flow_mappings["FlowType"].tolist() if not manager.flow_mappings.empty else []
-        if not flow_type_options:
-            st.warning("No Flow Types loaded from database. Please run the Data Manager app or ensure initial data is loaded.")
-        with col_flow:
-            flow_type_selected = st.selectbox("Flow Type", [""] + sorted(flow_type_options), key="flowtype_select")
-
-        add_interaction_button_clicked = st.form_submit_button("Add Interaction", use_container_width=True)
-
-        if add_interaction_button_clicked:
-            if source_elem and target_elem and flow_type_selected:
-                if source_elem == target_elem:
-                    st.error("Source and Target elements cannot be the same.")
-                else:
-                    manager.add_interaction(source_elem, target_elem, flow_type_selected)
-                    st.rerun()
-            else:
-                st.error("Please select all fields for the interaction.")
-
-    st.markdown("---")
-    st.markdown("#### Current Interactions")
-    if st.session_state.interactions:
-        for i, interaction in enumerate(list(st.session_state.interactions)):
-            col_display, col_remove = st.columns([0.8, 0.2])
-            with col_display:
-                st.write(f"{i+1}. {interaction[0]} ➡️ {interaction[1]} ({interaction[2]})")
-            with col_remove:
-                if st.button("Remove", key=f"remove_interaction_{i}"):
-                    manager.delete_interaction(interaction)
-                    st.rerun()
-    else:
-        st.info("No interactions defined yet.")
-
-st.subheader("📈 Architecture Graph Visualization")
-if st.session_state.architecture or st.session_state.interactions:
-    manager.render_graph()
-else:
-    st.info("Add elements and interactions to see the architecture graph.")
-
-st.subheader("🔒 Security Requirements Analysis")
-requirements_df = manager.generate_requirements()
-if not requirements_df.empty:
-    st.dataframe(requirements_df, use_container_width=True)
-else:
-    st.info("No security requirements generated. Ensure interactions are defined and control mappings are loaded.")
-
-st.subheader("🚨 Threat Modelling Recommendations")
-threat_analysis_df = manager.generate_threat_analysis()
-if not threat_analysis_df.empty:
-    st.dataframe(threat_analysis_df, use_container_width=True)
-else:
-    st.info("No threat analysis generated. Ensure interactions are defined and control mappings are loaded.")
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("### GitHub Integration Setup")
-st.sidebar.markdown("""
-To enable GitHub issue creation:
-1.  Go to your GitHub repository settings.
-2.  Navigate to `Secrets and variables` -> `Actions`.
-3.  Add repository secrets:
-    * `GITHUB_TOKEN`: Your GitHub Personal Access Token (PAT) with `repo` scope.
-    * `GITHUB_REPO_OWNER`: Your GitHub username or organization name.
-    * `GITHUB_REPO_NAME`: The name of your repository (e.g., `my-security-architecture`).
-4.  Alternatively, set these as environment variables where you run the Streamlit app.
-""")
-st.sidebar.warning("Never hardcode your GitHub Token in the script for production!")
+    def generate_requirements(self, asvs_level_filter: str = None):
+        """
+        Generates security requirements based on defined interactions and flow types,
+        using ASVS controls and filtering by selected ASVS level.
+        """
+        if self.flow_mappings.empty or self.asvs_controls
