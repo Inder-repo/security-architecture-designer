@@ -32,6 +32,7 @@ class SecurityArchitectureManager:
             st.session_state.interactions = []
         
         # Load the dynamic architecture (elements and interactions) from Excel or initialize
+        # We will keep the info message, but ensure it's not a blocking error.
         self._load_architecture_from_excel()
 
     def _get_db_connection(self):
@@ -135,6 +136,9 @@ class SecurityArchitectureManager:
             
             st.success("Architecture loaded successfully from architecture_data.xlsx!")
         except FileNotFoundError:
+            # This is an info message, not an error.
+            # We can use st.toast or st.info here if we want a less intrusive message.
+            # For debugging, st.info is fine. For production, consider st.toast.
             st.info("No existing 'architecture_data.xlsx' found. Starting a new architecture.")
             # Ensure session state is properly initialized if file not found
             st.session_state.architecture = {domain: [] for domain in DOMAINS}
@@ -150,7 +154,7 @@ class SecurityArchitectureManager:
         if name and name not in st.session_state.architecture[domain]:
             st.session_state.architecture[domain].append(name)
             st.success(f"Added '{name}' to {domain}.")
-            # No rerun here, let the UI handle it after form submission or button click
+            # Removed st.rerun() from here, it will be called by the button/form submitting the change.
         else:
             st.warning(f"Element '{name}' already exists in {domain} or is empty.")
 
@@ -160,7 +164,7 @@ class SecurityArchitectureManager:
         if new_interaction not in st.session_state.interactions:
             st.session_state.interactions.append(new_interaction)
             st.success(f"Added interaction: {source} --({flow_type})--> {target}")
-            # No rerun here
+            # Removed st.rerun() from here, it will be called by the button/form submitting the change.
         else:
             st.warning("This interaction already exists.")
 
@@ -189,7 +193,7 @@ class SecurityArchitectureManager:
         """Generates security requirements based on defined interactions and flow types."""
         if self.flow_mappings.empty:
             st.warning("Flow mappings data is not loaded or is empty. Cannot generate requirements. Please run the Data Manager app.")
-            return pd.DataFrame() # Return empty DataFrame
+            return pd.DataFrame(columns=["Interaction", "OWASP ID", "Requirement", "GRC Mapping"]) # Return empty DataFrame with expected columns
         
         requirements = []
         for source, target, flow_type in st.session_state.interactions:
@@ -207,7 +211,7 @@ class SecurityArchitectureManager:
         """Generates a STRIDE-based threat analysis with MITRE ATT&CK and controls."""
         if self.threat_mappings.empty:
             st.warning("Threat mappings data is not loaded or is empty. Cannot generate threat analysis. Please run the Data Manager app.")
-            return pd.DataFrame() # Return empty DataFrame
+            return pd.DataFrame(columns=["Interaction", "Source Domain", "Target Domain", "STRIDE Threat", "MITRE Technique", "Recommended Control", "NIST Control", "ISO Control"]) # Return empty DataFrame with expected columns
 
         threats = []
         element_domain_map = {
@@ -228,11 +232,8 @@ class SecurityArchitectureManager:
                 (self.threat_mappings["TargetDomain"] == tgt_domain)
             ]
 
-            # If no direct match, could consider a fallback, but for now stick to explicit
             if relevant_threats.empty:
-                # Optionally, log or display that no specific threats were found for this domain pair
-                # st.info(f"No specific STRIDE/MITRE mappings for {src_domain} -> {tgt_domain} interactions.")
-                pass
+                pass # No specific threats found, just skip and don't add to output
             
             for index, row in relevant_threats.iterrows():
                 threats.append({
@@ -268,10 +269,11 @@ class SecurityArchitectureManager:
         # Add edges
         for src, tgt, flow_type in st.session_state.interactions:
             # Ensure source and target nodes exist before adding edge
+            # Check if nodes were actually added by pyvis (they might not be if elements list is empty)
             if src in net.get_nodes() and tgt in net.get_nodes():
                 net.add_edge(src, tgt, title=flow_type, label=flow_type, color='darkgray', width=2)
             else:
-                st.warning(f"Skipping graph edge for '{src} -> {tgt}' as one or both elements not found in architecture.")
+                st.warning(f"Skipping graph edge for '{src} -> {tgt}' as one or both elements not found in graph nodes (check if elements were added).")
         
         try:
             html_file = "graph.html"
@@ -320,6 +322,7 @@ st.markdown("Use this tool to design your architecture and analyze security requ
 st.markdown("---")
 
 # Initialize the manager
+# This also loads the initial Excel data or creates a new one if not found.
 manager = SecurityArchitectureManager()
 
 # Sidebar for common actions and help
@@ -362,11 +365,17 @@ for i, domain in enumerate(DOMAINS):
                 st.write(f"No {domain} elements defined yet.")
 
             # Add new element input
-            new_elem_input = st.text_input(f"Add new {domain} element:", key=f"add_elem_input_{domain}")
-            if st.button(f"Add {domain} Element", key=f"add_elem_btn_{domain}"):
-                if new_elem_input:
-                    manager.add_element(domain, new_elem_input)
-                    st.rerun() # Rerun to update the element list and selectboxes
+            # Use a form to capture the input and button click together
+            with st.form(key=f"add_form_{domain}", clear_on_submit=True):
+                new_elem_input = st.text_input(f"Add new {domain} element:", key=f"add_elem_input_form_{domain}")
+                add_button_clicked = st.form_submit_button(f"Add {domain} Element")
+                
+                if add_button_clicked:
+                    if new_elem_input:
+                        manager.add_element(domain, new_elem_input)
+                        st.rerun() # Crucial: Rerun to update the element list and selectboxes
+                    else:
+                        st.warning("Element name cannot be empty.")
 
 
 st.subheader("🔗 Define Interactions Between Elements")
@@ -375,3 +384,77 @@ all_elements_flat = [item for sublist in st.session_state.architecture.values() 
 
 if not all_elements_flat:
     st.warning("Please add some elements before defining interactions.")
+else:
+    with st.form(key="add_interaction_form", clear_on_submit=True):
+        col_src, col_tgt, col_flow = st.columns(3)
+        with col_src:
+            source_elem = st.selectbox("Source Element", [""] + sorted(all_elements_flat), key="source_select")
+        with col_tgt:
+            target_elem = st.selectbox("Target Element", [""] + sorted(all_elements_flat), key="target_select")
+        
+        flow_type_options = manager.flow_mappings["FlowType"].tolist() if not manager.flow_mappings.empty else []
+        if not flow_type_options:
+            st.warning("No Flow Types loaded from database. Please run the Data Manager app.")
+        with col_flow:
+            flow_type_selected = st.selectbox("Flow Type", [""] + sorted(flow_type_options), key="flowtype_select")
+
+        add_interaction_button_clicked = st.form_submit_button("Add Interaction", use_container_width=True)
+
+        if add_interaction_button_clicked:
+            if source_elem and target_elem and flow_type_selected:
+                if source_elem == target_elem:
+                    st.error("Source and Target elements cannot be the same.")
+                else:
+                    manager.add_interaction(source_elem, target_elem, flow_type_selected)
+                    st.rerun() # Crucial: Rerun to update the interaction list
+            else:
+                st.error("Please select all fields for the interaction.")
+
+    st.markdown("---")
+    st.markdown("#### Current Interactions")
+    if st.session_state.interactions:
+        # Using a distinct key for each interaction delete button
+        for i, interaction in enumerate(list(st.session_state.interactions)):
+            col_display, col_remove = st.columns([0.8, 0.2])
+            with col_display:
+                st.write(f"{i+1}. {interaction[0]} ➡️ {interaction[1]} ({interaction[2]})")
+            with col_remove:
+                if st.button("Remove", key=f"remove_interaction_{i}"):
+                    manager.delete_interaction(interaction)
+                    st.rerun() # Rerun to update the interaction list
+    else:
+        st.info("No interactions defined yet.")
+
+st.subheader("📈 Architecture Graph Visualization")
+if st.session_state.architecture or st.session_state.interactions:
+    manager.render_graph()
+else:
+    st.info("Add elements and interactions to see the architecture graph.")
+
+st.subheader("🔒 Security Requirements Analysis")
+requirements_df = manager.generate_requirements() # Assign to a variable
+if not requirements_df.empty:
+    st.dataframe(requirements_df, use_container_width=True)
+else:
+    st.info("No security requirements generated. Ensure interactions are defined and control mappings are loaded.")
+
+st.subheader("🚨 Threat Modelling Recommendations")
+threat_analysis_df = manager.generate_threat_analysis() # Assign to a variable
+if not threat_analysis_df.empty:
+    st.dataframe(threat_analysis_df, use_container_width=True)
+else:
+    st.info("No threat analysis generated. Ensure interactions are defined and control mappings are loaded.")
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### GitHub Integration Setup")
+st.sidebar.markdown("""
+To enable GitHub issue creation:
+1.  Go to your GitHub repository settings.
+2.  Navigate to `Secrets and variables` -> `Actions`.
+3.  Add repository secrets:
+    * `GITHUB_TOKEN`: Your GitHub Personal Access Token (PAT) with `repo` scope.
+    * `GITHUB_REPO_OWNER`: Your GitHub username or organization name.
+    * `GITHUB_REPO_NAME`: The name of your repository (e.g., `my-security-architecture`).
+4.  Alternatively, set these as environment variables where you run the Streamlit app.
+""")
+st.sidebar.warning("Never hardcode your GitHub Token in the script for production!")
