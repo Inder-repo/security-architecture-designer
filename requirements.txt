@@ -7,4 +7,4 @@ pyvis
 requests
 PyGithub
 streamlit-graphviz
-graphviz
+
