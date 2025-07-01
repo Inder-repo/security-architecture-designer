@@ -8,9 +8,6 @@ import requests
 
 # --- Configuration Constants ---
 DB_FILE = "security_architecture.db" # Database file for security controls
-# EXCEL_FILE = "architecture_data.xlsx" # No longer needed for control mappings
-# REQUIREMENTS_FILE = "security_requirements_full.xlsx" # No longer needed
-# THREAT_MODEL_FILE = "stride_mitre_control_mapping.xlsx" # No longer needed
 
 # Define the domains for the architecture elements
 DOMAINS = ["People", "Application", "Platform", "Network", "Data"]
@@ -29,17 +26,13 @@ class SecurityArchitectureManager:
         self._load_data_from_db()
 
         # Initialize session state variables for architecture elements and interactions
-        # These are specific to the current user's active architecture design,
-        # not the global security control mappings.
         if "architecture" not in st.session_state:
             st.session_state.architecture = {domain: [] for domain in DOMAINS}
         if "interactions" not in st.session_state:
             st.session_state.interactions = []
         
-        # You might still want to save/load the *current architecture* to Excel,
-        # or switch this to SQLite as well for persistence between sessions.
-        # For now, let's keep the existing architecture save/load methods.
-        self._load_architecture_from_excel() # Keep this if you want to persist the dynamic architecture
+        # Load the dynamic architecture (elements and interactions) from Excel or initialize
+        self._load_architecture_from_excel()
 
     def _get_db_connection(self):
         """Establishes and returns a SQLite database connection."""
@@ -90,24 +83,32 @@ class SecurityArchitectureManager:
             self.threat_mappings = pd.read_sql_query("SELECT * FROM threat_mappings", conn)
         except Exception as e:
             st.error(f"Error loading data from database: {e}. Please ensure the Data Manager has been run to populate the database.")
+            # Ensure DataFrames are always created, even if empty, to prevent errors downstream
             self.flow_mappings = pd.DataFrame(columns=["FlowType", "OWASPID", "Requirement", "GRCMapping"])
             self.threat_mappings = pd.DataFrame(columns=["SourceDomain", "TargetDomain", "STRIDE_Threat", "MITRE_Technique", "Recommended_Control", "NIST_Control", "ISO_Control"])
         finally:
             conn.close()
 
     # --- ARCHITECTURE PERSISTENCE (Existing Excel methods for the active design) ---
-    # You could convert these to SQLite as well for unified storage
-    # but for typical Streamlit session-based apps, this might be fine,
-    # or you might want to save to a specific project file.
-
     def _save_architecture_to_excel(self):
         """Saves current architecture elements and interactions to Excel."""
-        elements = [(d, e) for d, el in st.session_state.architecture.items() for e in el]
-        df_elements = pd.DataFrame(elements, columns=["Domain", "Element"])
+        elements_data = []
+        for domain, elements in st.session_state.architecture.items():
+            for elem in elements:
+                elements_data.append({"Domain": domain, "Element": elem})
+        df_elements = pd.DataFrame(elements_data)
+        
+        # Ensure interactions are in a consistent format for DataFrame creation
         df_interactions = pd.DataFrame(st.session_state.interactions, columns=["Source", "Target", "FlowType"])
-        with pd.ExcelWriter("architecture_data.xlsx") as writer:
-            df_elements.to_excel(writer, sheet_name="Elements", index=False)
-            df_interactions.to_excel(writer, sheet_name="Interactions", index=False)
+        
+        try:
+            with pd.ExcelWriter("architecture_data.xlsx") as writer:
+                df_elements.to_excel(writer, sheet_name="Elements", index=False)
+                df_interactions.to_excel(writer, sheet_name="Interactions", index=False)
+            st.success("Architecture saved to architecture_data.xlsx!")
+        except Exception as e:
+            st.error(f"Failed to save architecture to architecture_data.xlsx: {e}")
+
 
     def _load_architecture_from_excel(self):
         """Loads architecture elements and interactions from Excel."""
@@ -120,35 +121,46 @@ class SecurityArchitectureManager:
             st.session_state.architecture = {domain: [] for domain in DOMAINS}
             st.session_state.interactions = []
 
-            for domain in DOMAINS:
-                domain_elements = df_elements[df_elements["Domain"] == domain]["Element"].dropna().tolist()
-                st.session_state.architecture[domain] = domain_elements
-            st.session_state.interactions = df_interactions.dropna().values.tolist()
+            for index, row in df_elements.iterrows():
+                domain = row["Domain"]
+                element = row["Element"]
+                if domain in DOMAINS and element not in st.session_state.architecture[domain]:
+                    st.session_state.architecture[domain].append(element)
+            
+            # Reconstruct interactions correctly
+            for index, row in df_interactions.iterrows():
+                interaction = [row["Source"], row["Target"], row["FlowType"]]
+                if interaction not in st.session_state.interactions:
+                    st.session_state.interactions.append(interaction)
+            
             st.success("Architecture loaded successfully from architecture_data.xlsx!")
         except FileNotFoundError:
             st.info("No existing 'architecture_data.xlsx' found. Starting a new architecture.")
-            # Reset session state if file not found
+            # Ensure session state is properly initialized if file not found
             st.session_state.architecture = {domain: [] for domain in DOMAINS}
             st.session_state.interactions = []
         except Exception as e:
             st.error(f"Failed to load architecture from architecture_data.xlsx: {e}")
 
-    # --- CORE APPLICATION LOGIC (Mostly unchanged, but now using self.flow_mappings/threat_mappings) ---
+    # --- CORE APPLICATION LOGIC ---
 
     def add_element(self, domain, name):
         """Adds a security architecture element."""
+        name = name.strip() # Clean whitespace
         if name and name not in st.session_state.architecture[domain]:
             st.session_state.architecture[domain].append(name)
             st.success(f"Added '{name}' to {domain}.")
+            # No rerun here, let the UI handle it after form submission or button click
         else:
             st.warning(f"Element '{name}' already exists in {domain} or is empty.")
 
     def add_interaction(self, source, target, flow_type):
         """Adds an interaction between two elements."""
-        new_interaction = [source, target, flow_type]
+        new_interaction = [source.strip(), target.strip(), flow_type.strip()] # Clean whitespace
         if new_interaction not in st.session_state.interactions:
             st.session_state.interactions.append(new_interaction)
             st.success(f"Added interaction: {source} --({flow_type})--> {target}")
+            # No rerun here
         else:
             st.warning("This interaction already exists.")
 
@@ -175,54 +187,69 @@ class SecurityArchitectureManager:
 
     def generate_requirements(self):
         """Generates security requirements based on defined interactions and flow types."""
-        reqs = {}
         if self.flow_mappings.empty:
             st.warning("Flow mappings data is not loaded or is empty. Cannot generate requirements. Please run the Data Manager app.")
-            return {}
-
+            return pd.DataFrame() # Return empty DataFrame
+        
+        requirements = []
         for source, target, flow_type in st.session_state.interactions:
-            filtered = self.flow_mappings[self.flow_mappings["FlowType"] == flow_type]
-            key = f"{source} -> {target} ({flow_type})"
-            reqs[key] = [
-                f"{row['Requirement']} (OWASP {row['OWASPID']}) - GRC: {row['GRCMapping']}"
-                for _, row in filtered.iterrows()
-            ]
-        return reqs
+            relevant_requirements = self.flow_mappings[self.flow_mappings["FlowType"] == flow_type]
+            for index, row in relevant_requirements.iterrows():
+                requirements.append({
+                    "Interaction": f"{source} --({flow_type})--> {target}",
+                    "OWASP ID": row["OWASPID"],
+                    "Requirement": row["Requirement"],
+                    "GRC Mapping": row["GRCMapping"]
+                })
+        return pd.DataFrame(requirements)
 
     def generate_threat_analysis(self):
         """Generates a STRIDE-based threat analysis with MITRE ATT&CK and controls."""
-        threats = {}
         if self.threat_mappings.empty:
             st.warning("Threat mappings data is not loaded or is empty. Cannot generate threat analysis. Please run the Data Manager app.")
-            return {}
+            return pd.DataFrame() # Return empty DataFrame
 
+        threats = []
         element_domain_map = {
             elem: domain for domain, elements in st.session_state.architecture.items() for elem in elements
         }
-        for source, target, _ in st.session_state.interactions:
+        
+        for source, target, flow_type in st.session_state.interactions: # Added flow_type for context
             src_domain = element_domain_map.get(source)
             tgt_domain = element_domain_map.get(target)
 
             if not src_domain or not tgt_domain:
-                # This could happen if elements were added, but their domains aren't defined in the mapping
-                st.warning(f"Domain not found for '{source}' or '{target}'. Skipping threat analysis for this interaction.")
+                st.warning(f"Domain not found for '{source}' or '{target}'. Skipping threat analysis for interaction: {source} -> {target}.")
                 continue
 
-            filtered = self.threat_mappings[
+            # Filtering based on source and target domains
+            relevant_threats = self.threat_mappings[
                 (self.threat_mappings["SourceDomain"] == src_domain) &
                 (self.threat_mappings["TargetDomain"] == tgt_domain)
             ]
+
+            # If no direct match, could consider a fallback, but for now stick to explicit
+            if relevant_threats.empty:
+                # Optionally, log or display that no specific threats were found for this domain pair
+                # st.info(f"No specific STRIDE/MITRE mappings for {src_domain} -> {tgt_domain} interactions.")
+                pass
             
-            key = f"{source} -> {target}"
-            threats[key] = [
-                f"{row['STRIDE_Threat']} via {row['MITRE_Technique']} ➤ {row['Recommended_Control']}\n • NIST: {row['NIST_Control']}\n • ISO: {row['ISO_Control']}"
-                for _, row in filtered.iterrows()
-            ]
-        return threats
+            for index, row in relevant_threats.iterrows():
+                threats.append({
+                    "Interaction": f"{source} --({flow_type})--> {target}", # Include flow_type for clarity
+                    "Source Domain": row["SourceDomain"],
+                    "Target Domain": row["TargetDomain"],
+                    "STRIDE Threat": row["STRIDE_Threat"],
+                    "MITRE Technique": row["MITRE_Technique"],
+                    "Recommended Control": row["Recommended_Control"],
+                    "NIST Control": row["NIST_Control"],
+                    "ISO Control": row["ISO_Control"]
+                })
+        return pd.DataFrame(threats)
+
 
     def render_graph(self):
         """Renders the architecture graph using Pyvis."""
-        # Your Pyvis rendering logic here (unchanged from previous version)
         color_map = {
             "People": "lightcoral",
             "Application": "lightblue",
@@ -235,11 +262,16 @@ class SecurityArchitectureManager:
         # Add nodes
         for domain, elements in st.session_state.architecture.items():
             for el in elements:
+                # Ensure each node has a unique ID, here element name is assumed unique globally
                 net.add_node(el, label=el, title=domain, color=color_map.get(domain, "gray"), size=25, font={'size': 14})
         
         # Add edges
         for src, tgt, flow_type in st.session_state.interactions:
-            net.add_edge(src, tgt, title=flow_type, label=flow_type, color='darkgray', width=2)
+            # Ensure source and target nodes exist before adding edge
+            if src in net.get_nodes() and tgt in net.get_nodes():
+                net.add_edge(src, tgt, title=flow_type, label=flow_type, color='darkgray', width=2)
+            else:
+                st.warning(f"Skipping graph edge for '{src} -> {tgt}' as one or both elements not found in architecture.")
         
         try:
             html_file = "graph.html"
@@ -252,7 +284,6 @@ class SecurityArchitectureManager:
 
     def create_github_issue(self, title: str, body: str) -> bool:
         """Creates a GitHub issue."""
-        # IMPORTANT: DO NOT HARDCODE YOUR GITHUB TOKEN
         GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
         REPO_OWNER = os.getenv("GITHUB_REPO_OWNER")
         REPO_NAME = os.getenv("GITHUB_REPO_NAME")
@@ -295,10 +326,10 @@ manager = SecurityArchitectureManager()
 st.sidebar.header("Architecture Actions")
 if st.sidebar.button("💾 Save Current Architecture"):
     manager._save_architecture_to_excel()
-    st.sidebar.success("Architecture saved!")
+    # No rerun here, success message is enough
 if st.sidebar.button("📂 Load Architecture"):
     manager._load_architecture_from_excel()
-    st.sidebar.success("Architecture loaded!")
+    st.rerun() # Rerun to update the displayed elements and interactions
 
 st.sidebar.markdown("---")
 st.sidebar.header("Manage Security Controls")
@@ -316,95 +347,31 @@ for i, domain in enumerate(DOMAINS):
     with cols[i]:
         st.markdown(f"**{domain}**")
         with st.container(border=True):
+            # Display elements with delete buttons
             if st.session_state.architecture[domain]:
-                for elem in list(st.session_state.architecture[domain]): # Use list() to allow modification during iteration
+                # Create a list copy to iterate, allowing modification of original
+                for elem in list(st.session_state.architecture[domain]): 
                     col_elem, col_btn = st.columns([0.7, 0.3])
                     with col_elem:
                         st.markdown(f"- {elem}")
                     with col_btn:
                         if st.button("Remove", key=f"del-{domain}-{elem}"):
                             manager.delete_element(domain, elem)
-                            st.rerun()
+                            st.rerun() # Rerun immediately after deletion
             else:
                 st.write(f"No {domain} elements defined yet.")
 
-            new_elem = st.text_input(f"Add new {domain} element:", key=f"add_elem_input_{domain}")
+            # Add new element input
+            new_elem_input = st.text_input(f"Add new {domain} element:", key=f"add_elem_input_{domain}")
             if st.button(f"Add {domain} Element", key=f"add_elem_btn_{domain}"):
-                if new_elem:
-                    manager.add_element(domain, new_elem.strip())
-                    st.rerun()
+                if new_elem_input:
+                    manager.add_element(domain, new_elem_input)
+                    st.rerun() # Rerun to update the element list and selectboxes
+
 
 st.subheader("🔗 Define Interactions Between Elements")
+# Crucial fix: Populate all_elements_flat *dynamically* from current session state
 all_elements_flat = [item for sublist in st.session_state.architecture.values() for item in sublist]
+
 if not all_elements_flat:
     st.warning("Please add some elements before defining interactions.")
-else:
-    col_src, col_tgt, col_flow = st.columns(3)
-    with col_src:
-        source_elem = st.selectbox("Source Element", [""] + sorted(all_elements_flat), key="source_select")
-    with col_tgt:
-        target_elem = st.selectbox("Target Element", [""] + sorted(all_elements_flat), key="target_select")
-    
-    flow_type_options = manager.flow_mappings["FlowType"].tolist() if not manager.flow_mappings.empty else []
-    if not flow_type_options:
-        st.warning("No Flow Types loaded from database. Please run the Data Manager app.")
-    with col_flow:
-        flow_type_selected = st.selectbox("Flow Type", [""] + sorted(flow_type_options), key="flowtype_select")
-
-    if st.button("Add Interaction", use_container_width=True):
-        if source_elem and target_elem and flow_type_selected:
-            if source_elem == target_elem:
-                st.error("Source and Target elements cannot be the same.")
-            else:
-                manager.add_interaction(source_elem, target_elem, flow_type_selected)
-                st.rerun()
-        else:
-            st.error("Please select all fields for the interaction.")
-
-    st.markdown("---")
-    st.markdown("#### Current Interactions")
-    if st.session_state.interactions:
-        for i, interaction in enumerate(list(st.session_state.interactions)):
-            col_display, col_remove = st.columns([0.8, 0.2])
-            with col_display:
-                st.write(f"{i+1}. {interaction[0]} ➡️ {interaction[1]} ({interaction[2]})")
-            with col_remove:
-                if st.button("Remove", key=f"remove_interaction_{i}"):
-                    manager.delete_interaction(interaction)
-                    st.rerun()
-    else:
-        st.info("No interactions defined yet.")
-
-st.subheader("📈 Architecture Graph Visualization")
-if st.session_state.architecture or st.session_state.interactions:
-    manager.render_graph()
-else:
-    st.info("Add elements and interactions to see the architecture graph.")
-
-st.subheader("🔒 Security Requirements Analysis")
-requirements = manager.generate_requirements()
-if isinstance(requirements, pd.DataFrame) and not requirements.empty:
-    st.dataframe(requirements, use_container_width=True)
-else:
-    st.info("No security requirements generated. Ensure interactions are defined and control mappings are loaded.")
-
-st.subheader("🚨 Threat Modelling Recommendations")
-threats = manager.generate_threat_analysis()
-if isinstance(threats, pd.DataFrame) and not threats.empty:
-    st.dataframe(threats, use_container_width=True)
-else:
-    st.info("No threat analysis generated. Ensure interactions are defined and control mappings are loaded.")
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("### GitHub Integration Setup")
-st.sidebar.markdown("""
-To enable GitHub issue creation:
-1.  Go to your GitHub repository settings.
-2.  Navigate to `Secrets and variables` -> `Actions`.
-3.  Add repository secrets:
-    * `GITHUB_TOKEN`: Your GitHub Personal Access Token (PAT) with `repo` scope.
-    * `GITHUB_REPO_OWNER`: Your GitHub username or organization name.
-    * `GITHUB_REPO_NAME`: The name of your repository (e.g., `my-security-architecture`).
-4.  Alternatively, set these as environment variables where you run the Streamlit app.
-""")
-st.sidebar.warning("Never hardcode your GitHub Token in the script for production!")
