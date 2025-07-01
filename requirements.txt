@@ -6,4 +6,5 @@ networkx
 pyvis
 requests
 PyGithub
-streamlit_graphviz
+streamlit-graphviz
+graphviz
