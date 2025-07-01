@@ -5,20 +5,17 @@ import os
 import re
 import logging
 import requests
-from github import Github, InputGitAuthor # Make sure to install PyGithub: pip install PyGithub
+from github import Github, InputGitAuthor
+import streamlit_graphviz # NEW: For drawing diagrams
 
 # --- Configuration Constants ---
 DB_FILE = "security_architecture.db"
 
 # Set file permissions for DB (OWASP: Secure configuration)
-# This is more relevant for a server-side application where file permissions are managed
-# On Streamlit Cloud, the underlying file system permissions are handled by their platform.
-# For local development, this ensures only the owner can read/write.
 if os.path.exists(DB_FILE):
     os.chmod(DB_FILE, 0o600)  # Owner read/write only
 
 # Set up logging for security events (OWASP: Logging and monitoring)
-# Log file path might need adjustment for Streamlit Cloud deployment (e.g., /tmp/ or persistent storage)
 logging.basicConfig(filename='security_app.log', level=logging.WARNING,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 def log_security_event(event):
@@ -27,7 +24,7 @@ def log_security_event(event):
     # st.warning(f"Security Alert: {event}") # Consider if this is appropriate for users
 
 # --- Input Validation Utility (OWASP: Input validation & sanitization) ---
-def validate_input(user_input, pattern=r'^[\w\s\-.@:/]+$'): # Expanded pattern to include common URL/path chars
+def validate_input(user_input, pattern=r'^[\w\s\-.@:/]+$'):
     """
     Validates user input against a regex pattern.
     Default pattern allows letters, numbers, spaces, hyphens, periods, "@", "/", and ":".
@@ -107,7 +104,6 @@ FLOW_TYPES = ["HTTPS", "API-to-API", "User Login", "Database Query", "File Trans
 STRIDE_THREATS = ["Spoofing", "Tampering", "Repudiation", "Information Disclosure", "Denial of Service", "Elevation of Privilege"]
 
 # Initial ASVS Controls with 'DetailedRecommendation' for direct OWASP content
-# I've added a few more detailed examples as per our discussion.
 INITIAL_ASVS_CONTROLS = [
     # ASVS V1: Architecture, Design and Threat Modeling
     {"ASVS_ID": "V1.1.1", "ASVS_Level": "L1", "Requirement": "Verify the application uses an actively managed, secure software development lifecycle (SDLC).", "GRCMapping": "NIST 800-53 SA-3", "DetailedRecommendation": "Ensure your SDLC integrates security practices at every phase, from requirements to deployment. This includes threat modeling, secure design reviews, static and dynamic analysis, and security testing."},
@@ -135,9 +131,9 @@ INITIAL_ASVS_CONTROLS = [
 ]
 
 INITIAL_FLOW_MAPPINGS = [
-    {"FlowType": "HTTPS", "ASVS_IDs": ["V3.1.1", "V3.2.1", "V6.1.1", "V1.2.2"]}, # Added more relevant ASVS for HTTPS
-    {"FlowType": "API-to-API", "ASVS_IDs": ["V1.2.1", "V2.2.1", "V4.1.1", "V5.1.1"]}, # Adjusted for API auth/access
-    {"FlowType": "User Login", "ASVS_IDs": ["V2.1.1", "V2.2.1", "V2.3.1", "V2.4.1", "V5.1.1", "V6.1.1", "V1.2.2"]}, # Comprehensive login flow
+    {"FlowType": "HTTPS", "ASVS_IDs": ["V3.1.1", "V3.2.1", "V6.1.1", "V1.2.2"]},
+    {"FlowType": "API-to-API", "ASVS_IDs": ["V1.2.1", "V2.2.1", "V4.1.1", "V5.1.1"]},
+    {"FlowType": "User Login", "ASVS_IDs": ["V2.1.1", "V2.2.1", "V2.3.1", "V2.4.1", "V5.1.1", "V6.1.1", "V1.2.2"]},
     {"FlowType": "Database Query", "ASVS_IDs": ["V4.1.1", "V5.1.1", "V6.1.1"]},
     {"FlowType": "File Transfer", "ASVS_IDs": ["V3.2.1", "V5.1.1"]},
     {"FlowType": "Other", "ASVS_IDs": ["V1.1.1", "V6.1.1"]},
@@ -416,6 +412,48 @@ class SecurityArchitectureManager:
         safe_execute(_create_issue_api) # Call via safe_execute
 
 
+# --- Diagramming Function (NEW) ---
+def render_architecture_diagram(architecture_elements, interactions):
+    """
+    Generates a Graphviz Dot language string for the architecture diagram.
+    Uses subgraphs for domains and connects elements based on interactions.
+    """
+    dot_graph = "digraph Architecture {\n"
+    dot_graph += "  rankdir=TB; /* Top to Bottom */\n"
+    dot_graph += "  node [shape=box, style=filled, fillcolor=lightblue];\n"
+    dot_graph += "  compound=true;\n" # Allows edges between clusters
+
+    # Define colors for domains (optional, enhances visual separation)
+    domain_colors = {
+        "People": "lightgreen",
+        "Application": "lightsalmon",
+        "Platform": "lightgrey",
+        "Network": "lightgoldenrod",
+        "Data": "lightpink"
+    }
+
+    # Add subgraphs for domains
+    for domain, elements in architecture_elements.items():
+        if elements:
+            dot_graph += f"  subgraph cluster_{domain.replace(' ', '_')} {{\n"
+            dot_graph += f"    label=\"{domain}\";\n"
+            dot_graph += f"    style=filled;\n"
+            dot_graph += f"    color=\"{domain_colors.get(domain, 'lightgray')}\";\n"
+            dot_graph += f"    node [fillcolor=\"{domain_colors.get(domain, 'lightgray')}\", fontcolor=black];\n" # Nodes inside subgraph match color
+            for element in elements:
+                dot_graph += f"    \"{element}\";\n"
+            dot_graph += "  }\n"
+
+    # Add interactions (edges)
+    for interaction in interactions:
+        source = interaction['source']
+        target = interaction['target']
+        flow_type = interaction['flow_type']
+        dot_graph += f"  \"{source}\" -> \"{target}\" [label=\"{flow_type}\"];\n"
+
+    dot_graph += "}"
+    return dot_graph
+
 # --- Main Streamlit App Logic ---
 def main():
     st.set_page_config(layout="wide", page_title="OWASP-Hardened Security Architecture Designer")
@@ -444,6 +482,7 @@ def main():
                 # Use validate_input for user-provided element names
                 if validate_input(new_element_name):
                     manager.add_element(selected_domain, new_element_name)
+                    st.experimental_rerun() # Rerun to update diagram immediately
         with col2:
             # Dropdown for deleting elements
             all_elements = [element for domain_list in st.session_state.architecture.values() for element in domain_list]
@@ -453,6 +492,7 @@ def main():
                     for domain, elements in st.session_state.architecture.items():
                         if element_to_delete in elements:
                             manager.delete_element(domain, element_to_delete)
+                            st.experimental_rerun() # Rerun to update diagram immediately
                             break
             else:
                 st.info("No elements to delete yet.")
@@ -476,6 +516,7 @@ def main():
             if source_element and target_element and flow_type and source_element != target_element:
                 if st.button("Add Interaction"):
                     manager.add_interaction(source_element, target_element, flow_type)
+                    st.experimental_rerun() # Rerun to update diagram immediately
             else:
                 st.info("Select valid source, target, and flow type to add an interaction.")
         else:
@@ -486,27 +527,40 @@ def main():
             interactions_df = pd.DataFrame(st.session_state.interactions)
             st.dataframe(interactions_df, use_container_width=True, hide_index=True)
 
-            if st.button("Delete All Interactions"):
-                st.session_state.interactions = []
-                st.toast("All interactions deleted.", icon="🗑️")
-
-            # Option to delete individual interactions
-            st.markdown("---")
-            st.subheader("Delete Specific Interaction")
-            interaction_options = [f"{i+1}. {interaction['source']} --({interaction['flow_type']})--> {interaction['target']}"
-                                   for i, interaction in enumerate(st.session_state.interactions)]
-            if interaction_options:
-                selected_interaction_index = st.selectbox("Select interaction to delete", options=[""] + interaction_options, key="delete_interaction_select")
-                if selected_interaction_index:
-                    index_to_delete = int(selected_interaction_index.split(".")[0]) - 1
-                    if st.button(f"Delete Selected Interaction ({selected_interaction_index})"):
-                        manager.delete_interaction(index_to_delete)
-                        st.experimental_rerun() # Rerun to update the list after deletion
-            else:
-                st.info("No interactions to delete.")
-
+            col_int1, col_int2 = st.columns(2)
+            with col_int1:
+                if st.button("Delete All Interactions", key="delete_all_interactions"):
+                    st.session_state.interactions = []
+                    st.toast("All interactions deleted.", icon="🗑️")
+                    st.experimental_rerun() # Rerun to update diagram immediately
+            with col_int2:
+                # Option to delete individual interactions
+                interaction_options = [f"{i+1}. {interaction['source']} --({interaction['flow_type']})--> {interaction['target']}"
+                                    for i, interaction in enumerate(st.session_state.interactions)]
+                if interaction_options:
+                    selected_interaction_index = st.selectbox("Select interaction to delete", options=[""] + interaction_options, key="delete_interaction_select")
+                    if selected_interaction_index:
+                        index_to_delete = int(selected_interaction_index.split(".")[0]) - 1
+                        if st.button(f"Delete Selected Interaction ({selected_interaction_index})", key="delete_selected_interaction_button"):
+                            manager.delete_interaction(index_to_delete)
+                            st.experimental_rerun() # Rerun to update the list and diagram after deletion
+                else:
+                    st.info("No interactions to delete.")
         else:
             st.info("No interactions defined yet.")
+
+        # --- Architecture Diagram (Re-added) ---
+        st.header("3. Visualized Architecture Diagram")
+        if st.session_state.architecture and any(st.session_state.architecture.values()):
+            dot_code = render_architecture_diagram(st.session_state.architecture, st.session_state.interactions)
+            try:
+                streamlit_graphviz.graphviz(dot_code)
+            except Exception as e:
+                st.error(f"Error rendering diagram. Make sure Graphviz is installed and accessible if running locally. Error: {e}")
+                st.code(dot_code, language="dot") # Show dot code for debugging
+        else:
+            st.info("Add elements and interactions to visualize your architecture.")
+
 
     elif page == "Security Requirements":
         st.title("📋 Generated Security Requirements")
