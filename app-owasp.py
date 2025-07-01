@@ -6,7 +6,9 @@ import re
 import logging
 import requests
 from github import Github, InputGitAuthor
-import streamlit_graphviz # NEW: For drawing diagrams
+import networkx as nx  # NEW: For graph manipulation
+from pyvis.network import Network  # NEW: For interactive network visualization
+import streamlit.components.v1 as components # NEW: For embedding HTML from pyvis
 
 # --- Configuration Constants ---
 DB_FILE = "security_architecture.db"
@@ -34,9 +36,6 @@ def validate_input(user_input, pattern=r'^[\w\s\-.@:/]+$'):
         user_input = str(user_input) # Ensure it's a string for regex matching
 
     if not re.match(pattern, user_input):
-        # Using st.error here might be too aggressive for every invalid input.
-        # Consider st.warning or a more subtle visual cue.
-        # st.error(f"Invalid input detected: '{user_input}'. Only letters, numbers, spaces, and basic punctuation allowed.")
         log_security_event(f"Rejected input due to invalid characters: '{user_input}'")
         return False
     return True
@@ -182,7 +181,7 @@ class SecurityArchitectureManager:
                 ASVS_Level TEXT NOT NULL,
                 Requirement TEXT NOT NULL,
                 GRCMapping TEXT,
-                DetailedRecommendation TEXT -- ADDED THIS LINE
+                DetailedRecommendation TEXT
             )
         """)
         # Create threat_mappings table
@@ -204,7 +203,6 @@ class SecurityArchitectureManager:
         cursor.execute("SELECT COUNT(*) FROM asvs_controls")
         if cursor.fetchone()[0] == 0:
             asvs_df = pd.DataFrame(INITIAL_ASVS_CONTROLS)
-            # Ensure 'DetailedRecommendation' column exists, even if some entries are empty
             if 'DetailedRecommendation' not in asvs_df.columns:
                 asvs_df['DetailedRecommendation'] = ''
             asvs_df.to_sql('asvs_controls', conn, if_exists='append', index=False)
@@ -235,22 +233,21 @@ class SecurityArchitectureManager:
             self.flow_mappings = pd.read_sql_query("SELECT * FROM flow_mappings", conn)
             self.flow_mappings['ASVS_IDs'] = self.flow_mappings['ASVS_IDs'].apply(lambda x: x.split(',') if x else [])
 
-            # Load the new column from DB for asvs_controls
             self.asvs_controls = pd.read_sql_query("SELECT * FROM asvs_controls", conn)
             self.threat_mappings = pd.read_sql_query("SELECT * FROM threat_mappings", conn)
         except Exception as e:
             st.error(f"Error loading data from database: {e}. Ensure the database file '{DB_FILE}' is accessible.")
             log_security_event(f"Database loading error: {e}", exc_info=True)
             self.flow_mappings = pd.DataFrame(columns=["FlowType", "ASVS_IDs"])
-            self.asvs_controls = pd.DataFrame(columns=["ASVS_ID", "ASVS_Level", "Requirement", "GRCMapping", "DetailedRecommendation"]) # ADDED NEW COLUMN
+            self.asvs_controls = pd.DataFrame(columns=["ASVS_ID", "ASVS_Level", "Requirement", "GRCMapping", "DetailedRecommendation"])
             self.threat_mappings = pd.DataFrame(columns=["SourceDomain", "TargetDomain", "STRIDE_Threat", "MITRE_Technique", "Recommended_Control", "NIST_Control", "ISO_Control"])
         finally:
             conn.close()
 
     def add_element(self, domain, name):
         """Adds a new element to the architecture."""
-        # Use validate_input for name
         if not validate_input(name):
+            st.error(f"Invalid characters in element name: '{name}'. Please use only letters, numbers, spaces, hyphens, periods, '/', '@', or ':'.")
             return
         if name not in st.session_state.architecture[domain]:
             st.session_state.architecture[domain].append(name)
@@ -275,6 +272,7 @@ class SecurityArchitectureManager:
         """Adds a new interaction between elements."""
         # Validate inputs for source, target, flow_type if they are user-entered
         if not (validate_input(source) and validate_input(target) and validate_input(flow_type)):
+            st.error("Invalid characters detected in source, target, or flow type. Please use allowed characters.")
             return
 
         interaction = {"source": source, "target": target, "flow_type": flow_type}
@@ -343,7 +341,6 @@ class SecurityArchitectureManager:
 
         if requirements:
             df = pd.DataFrame(requirements)
-            # Ensure the order of columns, including the new one
             return df.drop_duplicates(subset=["Interaction No.", "ASVS ID"], keep="first").sort_values(by=["Interaction No.", "ASVS ID"]).reindex(columns=[
                 "Interaction No.", "Interaction", "Flow Type", "ASVS ID", "ASVS Level", "Requirement", "Detailed Recommendation", "GRC Mapping"
             ])
@@ -412,47 +409,73 @@ class SecurityArchitectureManager:
         safe_execute(_create_issue_api) # Call via safe_execute
 
 
-# --- Diagramming Function (NEW) ---
-def render_architecture_diagram(architecture_elements, interactions):
+# --- Pyvis Diagramming Function (NEW/MODIFIED) ---
+def render_pyvis_graph(architecture_elements, interactions):
     """
-    Generates a Graphviz Dot language string for the architecture diagram.
-    Uses subgraphs for domains and connects elements based on interactions.
+    Generates an interactive network graph using pyvis and embeds it in Streamlit.
     """
-    dot_graph = "digraph Architecture {\n"
-    dot_graph += "  rankdir=TB; /* Top to Bottom */\n"
-    dot_graph += "  node [shape=box, style=filled, fillcolor=lightblue];\n"
-    dot_graph += "  compound=true;\n" # Allows edges between clusters
+    # Create a NetworkX graph first to easily manage nodes and edges
+    G = nx.DiGraph()
 
-    # Define colors for domains (optional, enhances visual separation)
-    domain_colors = {
-        "People": "lightgreen",
-        "Application": "lightsalmon",
-        "Platform": "lightgrey",
-        "Network": "lightgoldenrod",
-        "Data": "lightpink"
+    # Define colors for domains
+    color_map = {
+        "People": "#FFDDC1",  # Light Peach
+        "Application": "#B3E0FF", # Light Blue
+        "Platform": "#D4EDDA", # Light Green
+        "Network": "#FFF0B3", # Light Yellow
+        "Data": "#F8C4B4"    # Light Salmon
     }
 
-    # Add subgraphs for domains
+    # Add nodes to the NetworkX graph with domain as an attribute
     for domain, elements in architecture_elements.items():
-        if elements:
-            dot_graph += f"  subgraph cluster_{domain.replace(' ', '_')} {{\n"
-            dot_graph += f"    label=\"{domain}\";\n"
-            dot_graph += f"    style=filled;\n"
-            dot_graph += f"    color=\"{domain_colors.get(domain, 'lightgray')}\";\n"
-            dot_graph += f"    node [fillcolor=\"{domain_colors.get(domain, 'lightgray')}\", fontcolor=black];\n" # Nodes inside subgraph match color
-            for element in elements:
-                dot_graph += f"    \"{element}\";\n"
-            dot_graph += "  }\n"
+        for element_name in elements:
+            G.add_node(element_name, domain=domain, label=element_name,
+                       color=color_map.get(domain, '#CCCCCC'), # Default grey
+                       title=f"{element_name} ({domain} Domain)")
 
-    # Add interactions (edges)
+    # Add edges to the NetworkX graph
     for interaction in interactions:
         source = interaction['source']
         target = interaction['target']
         flow_type = interaction['flow_type']
-        dot_graph += f"  \"{source}\" -> \"{target}\" [label=\"{flow_type}\"];\n"
+        if source in G.nodes and target in G.nodes: # Only add if both nodes exist
+            G.add_edge(source, target, title=flow_type, label=flow_type)
+        else:
+            log_security_event(f"Skipping interaction due to missing element: {source} -> {target}")
 
-    dot_graph += "}"
-    return dot_graph
+
+    # Create a Pyvis network
+    net = Network(height="600px", width="100%", directed=True, notebook=True,
+                  cdn_resources='remote') # Use remote CDN for stability in deployment
+
+    # Add nodes and edges from NetworkX graph to Pyvis network
+    # Pyvis will automatically pick up node attributes like 'label', 'color', 'title'
+    # and edge attributes like 'title', 'label'
+    net.from_nx(G)
+
+    # Add physics, layout, etc. for better visualization (optional)
+    net.toggle_physics(True)
+    net.show_buttons(filter_=['physics', 'nodes', 'edges', 'layout']) # Show controls to user
+
+    # Save the network to an HTML file
+    try:
+        # Create a temp file path (Streamlit Cloud has a writable /tmp directory)
+        html_file_path = "pyvis_graph.html"
+        net.save_graph(html_file_path)
+
+        # Read the HTML and embed it in Streamlit
+        with open(html_file_path, 'r', encoding='utf-8') as f:
+            html_content = f.read()
+        components.html(html_content, height=600, scrolling=True)
+
+        # Clean up the temporary HTML file
+        if os.path.exists(html_file_path):
+            os.remove(html_file_path)
+
+    except Exception as e:
+        st.error(f"Error rendering interactive graph: {e}. Check browser console for details.")
+        log_security_event(f"Pyvis rendering error: {e}", exc_info=True)
+
 
 # --- Main Streamlit App Logic ---
 def main():
@@ -479,10 +502,8 @@ def main():
         col1, col2 = st.columns(2)
         with col1:
             if st.button(f"Add '{new_element_name}' to {selected_domain} Domain", disabled=not new_element_name):
-                # Use validate_input for user-provided element names
-                if validate_input(new_element_name):
-                    manager.add_element(selected_domain, new_element_name)
-                    st.experimental_rerun() # Rerun to update diagram immediately
+                manager.add_element(selected_domain, new_element_name)
+                # No rerun needed here, pyvis will update on interaction add
         with col2:
             # Dropdown for deleting elements
             all_elements = [element for domain_list in st.session_state.architecture.values() for element in domain_list]
@@ -492,7 +513,7 @@ def main():
                     for domain, elements in st.session_state.architecture.items():
                         if element_to_delete in elements:
                             manager.delete_element(domain, element_to_delete)
-                            st.experimental_rerun() # Rerun to update diagram immediately
+                            # No rerun needed here, pyvis will update on interaction add
                             break
             else:
                 st.info("No elements to delete yet.")
@@ -516,7 +537,7 @@ def main():
             if source_element and target_element and flow_type and source_element != target_element:
                 if st.button("Add Interaction"):
                     manager.add_interaction(source_element, target_element, flow_type)
-                    st.experimental_rerun() # Rerun to update diagram immediately
+                    # No rerun needed here, pyvis will update on interaction add
             else:
                 st.info("Select valid source, target, and flow type to add an interaction.")
         else:
@@ -532,7 +553,6 @@ def main():
                 if st.button("Delete All Interactions", key="delete_all_interactions"):
                     st.session_state.interactions = []
                     st.toast("All interactions deleted.", icon="🗑️")
-                    st.experimental_rerun() # Rerun to update diagram immediately
             with col_int2:
                 # Option to delete individual interactions
                 interaction_options = [f"{i+1}. {interaction['source']} --({interaction['flow_type']})--> {interaction['target']}"
@@ -543,21 +563,15 @@ def main():
                         index_to_delete = int(selected_interaction_index.split(".")[0]) - 1
                         if st.button(f"Delete Selected Interaction ({selected_interaction_index})", key="delete_selected_interaction_button"):
                             manager.delete_interaction(index_to_delete)
-                            st.experimental_rerun() # Rerun to update the list and diagram after deletion
                 else:
                     st.info("No interactions to delete.")
         else:
             st.info("No interactions defined yet.")
 
-        # --- Architecture Diagram (Re-added) ---
-        st.header("3. Visualized Architecture Diagram")
+        # --- Architecture Diagram (using pyvis) ---
+        st.header("3. Visualized Architecture Diagram (Interactive)")
         if st.session_state.architecture and any(st.session_state.architecture.values()):
-            dot_code = render_architecture_diagram(st.session_state.architecture, st.session_state.interactions)
-            try:
-                streamlit_graphviz.graphviz(dot_code)
-            except Exception as e:
-                st.error(f"Error rendering diagram. Make sure Graphviz is installed and accessible if running locally. Error: {e}")
-                st.code(dot_code, language="dot") # Show dot code for debugging
+            render_pyvis_graph(st.session_state.architecture, st.session_state.interactions)
         else:
             st.info("Add elements and interactions to visualize your architecture.")
 
@@ -579,7 +593,6 @@ def main():
         requirements_df = manager.generate_requirements(asvs_level_selection)
 
         if not requirements_df.empty:
-            # Display the DataFrame, now including the "Detailed Recommendation" column
             st.dataframe(requirements_df, use_container_width=True, hide_index=True)
             csv_requirements = requirements_df.to_csv(index=False).encode('utf-8')
             st.download_button(
@@ -616,7 +629,7 @@ def main():
                             f"**ASVS ID:** {matching_req['ASVS ID']}\n"
                             f"**ASVS Level:** {matching_req['ASVS Level']}\n"
                             f"**Requirement:** {matching_req['Requirement']}\n"
-                            f"**Detailed Recommendation:** {matching_req.get('Detailed Recommendation', 'N/A')}\n\n" # Include new field
+                            f"**Detailed Recommendation:** {matching_req.get('Detailed Recommendation', 'N/A')}\n\n"
                             f"**GRC Mapping:** {matching_req['GRC Mapping']}\n\n"
                             f"---"
                             f"\n*This issue was automatically generated. Please update with more details as needed.*"
@@ -676,10 +689,6 @@ def main():
                         st.markdown(f"**OWASP Recommendation:**\n{row['DetailedRecommendation']}")
                     else:
                         st.info("No detailed recommendation available for this control in the current data.")
-                    # Optionally, add a link to the official OWASP Cheat Sheet if a direct one is available
-                    # For example, if you had a column 'OWASPLink' in your asvs_controls
-                    # if row.get('OWASPLink'):
-                    #     st.markdown(f"[View on OWASP Cheat Sheet]({row['OWASPLink']})")
         else:
             st.info("No ASVS controls found matching your search query or no controls defined.")
 
